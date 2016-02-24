@@ -1,5 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface, OverloadedStrings #-}
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, BangPatterns #-}
 
 module Network.Wai.Handler.Warp.Recv (
     receive
@@ -12,6 +12,7 @@ module Network.Wai.Handler.Warp.Recv (
 #if __GLASGOW_HASKELL__ < 709
 import Control.Applicative ((<$>))
 #endif
+import Control.Concurrent (yield)
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (ByteString(..))
@@ -112,21 +113,27 @@ receiveBuf sock buf0 siz0 = loop buf0 siz0
     fd = fdSocket sock
 
 receiveloop :: CInt -> Ptr Word8 -> CSize -> IO CInt
-receiveloop sock ptr size = do
+receiveloop sock ptr size = go 0
+  where
+    go :: Int -> IO CInt
+    go !n = do
 #ifdef mingw32_HOST_OS
-    bytes <- windowsThreadBlockHack $ fromIntegral <$> readRawBufferPtr "recv" (FD sock 1) (castPtr ptr) 0 size
+        bytes <- windowsThreadBlockHack $ fromIntegral <$> readRawBufferPtr "recv" (FD sock 1) (castPtr ptr) 0 size
 #else
-    bytes <- c_recv sock (castPtr ptr) size 0
+        bytes <- c_recv sock (castPtr ptr) size 0
 #endif
-    if bytes == -1 then do
-        errno <- getErrno
-        if errno == eAGAIN then do
-            threadWaitRead (Fd sock)
-            receiveloop sock ptr size
-          else
-            throwErrno "receiveloop"
-       else
-        return bytes
+        if bytes == -1 then do
+            errno <- getErrno
+            if errno == eAGAIN then do
+                if n < 3 then
+                    yield
+                  else
+                    threadWaitRead (Fd sock)
+                go (n + 1)
+              else
+                throwErrno "receiveloop"
+           else
+            return bytes
 
 -- fixme: the type of the return value
 foreign import ccall unsafe "recv"
