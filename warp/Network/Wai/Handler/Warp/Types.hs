@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, BangPatterns, RankNTypes #-}
 
 module Network.Wai.Handler.Warp.Types where
 
@@ -15,6 +15,10 @@ import qualified Network.Wai.Handler.Warp.Date as D
 import qualified Network.Wai.Handler.Warp.FdCache as F
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
 import qualified Network.Wai.Handler.Warp.Timeout as T
+
+import Control.Monad (void)
+import Control.Concurrent
+import System.IO.Unsafe
 
 #ifndef WINDOWS
 import System.Posix.Types (Fd)
@@ -193,3 +197,21 @@ data Transport = TCP -- ^ Plain channel: TCP
 isTransportSecure :: Transport -> Bool
 isTransportSecure TCP = False
 isTransportSecure _   = True
+
+
+
+cntref :: IORef Int
+cntref = unsafePerformIO (newIORef 0)
+
+forkRR :: ((forall a. IO a -> IO a) -> IO ()) -> IO ()
+forkRR action = do
+    cnt <- readIORef cntref
+    n <- getNumCapabilities
+    let !cnt' = (cnt + 1) `mod` n
+    writeIORef cntref cnt'
+    void $ forkOnWithUnmask n action
+
+forkOnSameCore :: IO () -> IO ThreadId
+forkOnSameCore action = do
+    (n,_) <- myThreadId >>= threadCapability
+    forkOn n action

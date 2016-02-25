@@ -259,7 +259,7 @@ fork :: Settings
      -> Counter
      -> InternalInfo0
      -> IO ()
-fork set mkConn addr app counter ii0 = settingsFork set $ \ unmask ->
+fork set mkConn addr app counter ii0 = forkRR $ \ unmask ->
     -- Run the connection maker to get a new connection, and ensure
     -- that the connection is closed. If the mkConn call throws an
     -- exception, we will leak the connection. If the mkConn call is

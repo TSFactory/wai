@@ -3,7 +3,7 @@
 
 module Network.Wai.Handler.Warp.HTTP2 (isHTTP2, http2) where
 
-import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent (killThread)
 import qualified Control.Exception as E
 import Control.Monad (when, unless, replicateM_)
 import Data.ByteString (ByteString)
@@ -41,7 +41,7 @@ http2 conn ii1 addr transport settings readN app = do
         replicateM_ 3 $ spawnAction mgr
         -- Receiver
         let mkreq = mkRequest ii1 settings addr
-        tid <- forkIO $ frameReceiver ctx mkreq readN
+        tid <- forkOnSameCore $ frameReceiver ctx mkreq readN
         -- Sender
         -- frameSender is the main thread because it ensures to send
         -- a goway frame.

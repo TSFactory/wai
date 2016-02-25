@@ -22,6 +22,7 @@ import Control.Monad (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Foldable
+import Network.Wai.Handler.Warp.Types
 import Network.Wai.Handler.Warp.IORef
 import Network.Wai.Handler.Warp.Settings
 import qualified Network.Wai.Handler.Warp.Timeout as T
@@ -43,7 +44,7 @@ start set = do
     q <- newTQueueIO
     ref <- newIORef (\_ -> return ())
     timmgr <- T.initialize $ settingsTimeout set * 1000000
-    void $ forkIO $ go q Set.empty ref timmgr
+    void $ forkOnSameCore $ go q Set.empty ref timmgr
     return $ Manager q ref
   where
     go q !tset0 ref timmgr = do
@@ -58,7 +59,7 @@ start set = do
       where
         next tset = do
             action <- readIORef ref
-            newtid <- forkIO (action timmgr)
+            newtid <- forkOnSameCore (action timmgr)
             let !tset' = add newtid tset
             go q tset' ref timmgr
 

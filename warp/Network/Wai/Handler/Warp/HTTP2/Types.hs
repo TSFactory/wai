@@ -8,7 +8,6 @@ import Data.ByteString.Builder (Builder)
 #if __GLASGOW_HASKELL__ < 709
 import Control.Applicative ((<$>),(<*>))
 #endif
-import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Exception (SomeException, bracket)
 import Control.Monad (void)
@@ -239,7 +238,7 @@ search (StreamTable ref) k = M.lookup k <$> readIORef ref
 {-# INLINE forkAndEnqueueWhenReady #-}
 forkAndEnqueueWhenReady :: STM () -> PriorityTree Output -> Output -> Manager -> IO ()
 forkAndEnqueueWhenReady wait outQ out mgr = bracket setup teardown $ \_ ->
-    void . forkIO $ do
+    void . forkOnSameCore $ do
         atomically wait
         enqueueOutput outQ out
   where
