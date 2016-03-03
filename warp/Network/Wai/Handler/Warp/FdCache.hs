@@ -5,6 +5,8 @@
 #ifdef WINDOWS
 module Network.Wai.Handler.Warp.FdCache (
     withFdCache
+  , initialize
+  , terminate
   , MutableFdCache
   , Refresh
   ) where
@@ -17,6 +19,8 @@ withFdCache _ f = f Nothing
 #else
 module Network.Wai.Handler.Warp.FdCache (
     withFdCache
+  , initialize
+  , terminate
   , getFd
   , getFd'
   , MutableFdCache

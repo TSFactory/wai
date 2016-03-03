@@ -4,6 +4,10 @@ module Network.Wai.Handler.Warp.FileInfoCache (
     FileInfo(..)
   , Hash
   , withFileInfoCache
+  , initialize
+  , terminate
+  , getAndRegisterInfo
+  , getAndRegisterInfo'
   , getInfo -- test purpose only
   ) where
 

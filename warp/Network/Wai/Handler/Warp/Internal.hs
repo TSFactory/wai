@@ -67,9 +67,9 @@ module Network.Wai.Handler.Warp.Internal (
   ) where
 
 import Network.Wai.Handler.Warp.Buffer
-import Network.Wai.Handler.Warp.Date
-import Network.Wai.Handler.Warp.FdCache
-import Network.Wai.Handler.Warp.FileInfoCache
+import Network.Wai.Handler.Warp.Date hiding (initialize)
+import Network.Wai.Handler.Warp.FdCache hiding (initialize, terminate)
+import Network.Wai.Handler.Warp.FileInfoCache hiding (initialize)
 import Network.Wai.Handler.Warp.Header
 import Network.Wai.Handler.Warp.Recv
 import Network.Wai.Handler.Warp.Request
