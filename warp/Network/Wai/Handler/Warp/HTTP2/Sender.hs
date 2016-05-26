@@ -31,7 +31,7 @@ import Network.Wai.Handler.Warp.Types
 #ifdef WINDOWS
 import qualified System.IO as IO
 #else
-import Network.Wai.Handler.Warp.FdCache
+import Network.Wai.Handler.Warp.FdCache hiding (getFd)
 import Network.Wai.Handler.Warp.SendFile (positionRead)
 import qualified Network.Wai.Handler.Warp.Timeout as T
 #endif

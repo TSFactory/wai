@@ -3,8 +3,6 @@
 module Network.Wai.Handler.Warp.Date (
     withDateCache
   , initialize
-  , getDate
-  , DateCache
   , GMTDate
   ) where
 

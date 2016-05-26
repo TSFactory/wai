@@ -20,11 +20,8 @@ import qualified Network.Wai.Handler.Warp.Timeout as T
 -- | WarpServant encapsulates web server state shared across connections. Using it
 -- allows you to take over an existing single connection as if it was established by
 -- Warp itself ('serveConnection')
-data WarpServant = WarpServant
-  { warpInternalInfo :: InternalInfo
-  , warpSettings     :: Settings
-  }
-
+data WarpServant = WarpServant InternalInfo0 Settings
+  
 allocateWarpServant :: Settings -> ResourceT IO (ReleaseKey, WarpServant)
 allocateWarpServant set = do
   (tmRelease, tm) <- case settingsManager set of
@@ -33,12 +30,14 @@ allocateWarpServant set = do
   dateCache <- liftIO D.initialize
   (fcRelease, fileCache) <- allocate (F.initialize $ settingsFdCacheDuration set * 1000000) F.terminate
   (ficRelease, fileInfoCache) <- allocate (I.initialize $ settingsFileInfoCacheDuration set * 1000000) I.terminate
+  let fdc = if settingsFdCacheDuration set == 0 then F.getFdNothing else F.getFd fileCache
+      fic = if settingsFileInfoCacheDuration set == 0 then I.getInfoNaive else I.getAndRegisterInfo fileInfoCache
 
   releaseAll <- register (release ficRelease >> release fcRelease >> release tmRelease)
-  let ii0 = InternalInfo undefined tm fileCache (I.getAndRegisterInfo fileInfoCache) (I.getAndRegisterInfo' fileInfoCache) dateCache
+  let ii0 = InternalInfo0 tm dateCache fdc fic
   return (releaseAll, WarpServant ii0 set)
 
 serveConnection :: WarpServant -> (Connection, SockAddr) -> Application -> IO ()
-serveConnection (WarpServant ii set) (c, sa) app =
-  bracket (T.registerKillThread (timeoutManager ii)) T.cancel $ \th ->
-    R.serveConnection c ii { threadHandle = th } sa TCP set app
+serveConnection (WarpServant ii@(InternalInfo0 tm _ _ _) set) (c, sa) app =
+  bracket (T.registerKillThread tm) T.cancel $ \th ->
+    R.serveConnection c (toInternalInfo1 ii th) sa TCP set app

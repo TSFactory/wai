@@ -7,6 +7,8 @@ module Network.Wai.Handler.Warp.FdCache (
   , Fd
   , initialize
   , terminate
+  , getFdNothing
+  , getFd
   , MutableFdCache
   , Refresh
 #ifndef WINDOWS
