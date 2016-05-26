@@ -15,7 +15,8 @@ import qualified Control.Exception as E
 import Control.Monad (when, unless, void)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Maybe (isJust)
+import Network.HPACK
+import Network.HPACK.Token
 import Network.HTTP2
 import Network.HTTP2.Priority (toPrecedence, delete, prepare)
 import Network.Wai.Handler.Warp.HTTP2.EncodeFrame
@@ -23,6 +24,7 @@ import Network.Wai.Handler.Warp.HTTP2.HPACK
 import Network.Wai.Handler.Warp.HTTP2.Request
 import Network.Wai.Handler.Warp.HTTP2.Types
 import Network.Wai.Handler.Warp.IORef
+import Network.Wai.Handler.Warp.ReadInt
 import Network.Wai.Handler.Warp.Types
 
 ----------------------------------------------------------------
@@ -103,30 +105,26 @@ frameReceiver ctx mkreq recvN = loop 0 `E.catch` sendGoaway
           state <- readIORef streamState
           state' <- stream ftyp header pl ctx state strm
           case state' of
-              Open (NoBody hdr pri) -> do
+              Open (NoBody tbl@(_,reqvt) pri) -> do
                   resetContinued
-                  case validateHeaders hdr of
-                      Just vh -> do
-                          when (isJust (vhCL vh) && vhCL vh /= Just 0) $
-                              E.throwIO $ StreamError ProtocolError streamId
-                          writeIORef streamPrecedence $ toPrecedence pri
-                          writeIORef streamState HalfClosed
-                          let !req = mkreq vh (return "")
-                          atomically $ writeTQueue inputQ $ Input strm req
-                      Nothing -> E.throwIO $ StreamError ProtocolError streamId
-              Open (HasBody hdr pri) -> do
+                  let mcl = readInt <$> getHeaderValue tokenContentLength reqvt
+                  when (just mcl (== (0 :: Int))) $
+                      E.throwIO $ StreamError ProtocolError streamId
+                  writeIORef streamPrecedence $ toPrecedence pri
+                  writeIORef streamState HalfClosed
+                  let (!req, !ii) = mkreq tbl (return "")
+                  atomically $ writeTQueue inputQ $ Input strm req reqvt ii
+              Open (HasBody tbl@(_,reqvt) pri) -> do
                   resetContinued
-                  case validateHeaders hdr of
-                      Just vh -> do
-                          q <- newTQueueIO
-                          writeIORef streamPrecedence $ toPrecedence pri
-                          writeIORef streamState (Open (Body q))
-                          writeIORef streamContentLength $ vhCL vh
-                          readQ <- newReadBody q
-                          bodySource <- mkSource readQ
-                          let !req = mkreq vh (readSource bodySource)
-                          atomically $ writeTQueue inputQ $ Input strm req
-                      Nothing -> E.throwIO $ StreamError ProtocolError streamId
+                  q <- newTQueueIO
+                  writeIORef streamPrecedence $ toPrecedence pri
+                  writeIORef streamState (Open (Body q))
+                  let mcl = readInt <$> getHeaderValue tokenContentLength reqvt
+                  writeIORef streamContentLength mcl
+                  readQ <- newReadBody q
+                  bodySource <- mkSource readQ
+                  let (!req, !ii) = mkreq tbl (readSource bodySource)
+                  atomically $ writeTQueue inputQ $ Input strm req reqvt ii
               s@(Open Continued{}) -> do
                   setContinued
                   writeIORef streamState s
@@ -187,9 +185,11 @@ control FrameSettings header@FrameHeader{flags} bs Context{http2settings, contro
         modifyIORef' http2settings $ \old -> updateSettings old alist
         let !frame = settingsFrame setAck []
         sent <- readIORef firstSettings
-        let !frame' = if sent then frame else BS.append initialFrame frame
+        let !setframe
+              | sent      = CSettings               frame alist
+              | otherwise = CSettings0 initialFrame frame alist
         unless sent $ writeIORef firstSettings True
-        enqueueControl controlQ $ CSettings frame' alist
+        enqueueControl controlQ setframe
     return True
 
 control FramePing FrameHeader{flags} bs Context{controlQ} =
@@ -217,11 +217,14 @@ control _ _ _ _ =
 
 ----------------------------------------------------------------
 
+{-# INLINE guardIt #-}
 guardIt :: Either HTTP2Error a -> IO a
 guardIt x = case x of
     Left err    -> E.throwIO err
     Right frame -> return frame
 
+
+{-# INLINE checkPriority #-}
 checkPriority :: Priority -> StreamId -> IO ()
 checkPriority p me
   | dep == me = E.throwIO $ StreamError ProtocolError me
@@ -240,11 +243,11 @@ stream FrameHeaders header@FrameHeader{flags} bs ctx (Open JustOpened) Stream{st
     let !endOfStream = testEndStream flags
         !endOfHeader = testEndHeader flags
     if endOfHeader then do
-        hdr <- hpackDecodeHeader frag ctx
+        tbl <- hpackDecodeHeader frag ctx -- fixme
         return $ if endOfStream then
-                    Open (NoBody hdr pri)
+                    Open (NoBody tbl pri)
                    else
-                    Open (HasBody hdr pri)
+                    Open (HasBody tbl pri)
       else do
         let !siz = BS.length frag
         return $ Open $ Continued [frag] siz 1 endOfStream pri
@@ -298,11 +301,11 @@ stream FrameContinuation FrameHeader{flags} frag ctx (Open (Continued rfrags siz
       E.throwIO $ ConnectionError EnhanceYourCalm "Header is too fragmented"
     if endOfHeader then do
         let !hdrblk = BS.concat $ reverse rfrags'
-        hdr <- hpackDecodeHeader hdrblk ctx
+        tbl <- hpackDecodeHeader hdrblk ctx
         return $ if endOfStream then
-                    Open (NoBody hdr pri)
+                    Open (NoBody tbl pri)
                    else
-                    Open (HasBody hdr pri)
+                    Open (HasBody tbl pri)
       else
         return $ Open $ Continued rfrags' siz' n' endOfStream pri
 
@@ -345,3 +348,22 @@ stream _ _ _ _ (Open Continued{}) _ = E.throwIO $ ConnectionError ProtocolError 
 stream _ _ _ _ st@(Closed (ResetByMe _)) _ = return st
 stream FrameData FrameHeader{streamId} _ _ _ _ = E.throwIO $ StreamError StreamClosed streamId
 stream _ FrameHeader{streamId} _ _ _ _ = E.throwIO $ StreamError ProtocolError streamId
+
+----------------------------------------------------------------
+
+{-# INLINE newReadBody #-}
+newReadBody :: TQueue ByteString -> IO (IO ByteString)
+newReadBody q = do
+    ref <- newIORef False
+    return $ readBody q ref
+
+{-# INLINE readBody #-}
+readBody :: TQueue ByteString -> IORef Bool -> IO ByteString
+readBody q ref = do
+    eof <- readIORef ref
+    if eof then
+        return ""
+      else do
+        bs <- atomically $ readTQueue q
+        when (bs == "") $ writeIORef ref True
+        return bs

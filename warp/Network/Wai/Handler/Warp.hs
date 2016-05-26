@@ -90,6 +90,11 @@ module Network.Wai.Handler.Warp (
   , pauseTimeout
   , FileInfo(..)
   , getFileInfo
+  , withApplication
+  , withApplicationSettings
+  , testWithApplication
+  , testWithApplicationSettings
+  , openFreePort
     -- * Version
   , warpVersion
   ) where
@@ -108,7 +113,8 @@ import Network.Wai.Handler.Warp.Response (warpVersion)
 import Network.Wai.Handler.Warp.Run
 import Network.Wai.Handler.Warp.Settings
 import Network.Wai.Handler.Warp.Timeout
-import Network.Wai.Handler.Warp.Types
+import Network.Wai.Handler.Warp.Types hiding (getFileInfo)
+import Network.Wai.Handler.Warp.WithApplication
 
 -- | Port to listen on. Default value: 3000
 --
@@ -242,7 +248,7 @@ getOnException = settingsOnException
 --
 -- For instance, this code should set up a UNIX signal
 -- handler. The handler should call the first argument,
--- which close the listen socket, at shutdown.
+-- which closes the listen socket, at shutdown.
 --
 -- Default: does not install any code.
 --
@@ -334,7 +340,7 @@ setSlowlorisSize x y = y { settingsSlowlorisSize = x }
 setHTTP2Disabled :: Settings -> Settings
 setHTTP2Disabled y = y { settingsHTTP2Enabled = False }
 
--- | Setting a log function.
+-- | Setting a log function. `Integer` is the body length of a response.
 --
 -- Since 3.X.X
 setLogger :: (Request -> H.Status -> Maybe Integer -> IO ())

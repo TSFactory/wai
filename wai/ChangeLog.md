@@ -1,3 +1,15 @@
+## 3.2.1.1
+
+* Relax upper bound on bytestring-builder
+
+## 3.2.1
+
+* add mapResponseStatus [#532](https://github.com/yesodweb/wai/pull/532)
+
+## 3.2.0.1
+
+* Add missing changelog entry
+
 ## 3.2.0
 
 * Major version up due to breaking changes. We chose 3.2.0, not 3.1.0

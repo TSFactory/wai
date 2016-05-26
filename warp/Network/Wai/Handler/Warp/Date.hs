@@ -26,21 +26,14 @@ import System.Posix (epochTime)
 -- | The type of the Date header value.
 type GMTDate = ByteString
 
--- | The type of the cache of the Date header value.
-type DateCache = IO GMTDate
-
 -- | Creating 'DateCache' and executing the action.
-withDateCache :: (DateCache -> IO a) -> IO a
+withDateCache :: (IO GMTDate -> IO a) -> IO a
 withDateCache action = initialize >>= action
 
-initialize :: IO DateCache
+initialize :: IO (IO GMTDate)
 initialize = mkAutoUpdate defaultUpdateSettings {
                             updateAction = formatHTTPDate <$> getCurrentHTTPDate
                           }
-
--- | Getting current 'GMTDate' based on 'DateCache'.
-getDate :: DateCache -> IO GMTDate
-getDate = id
 
 #ifdef WINDOWS
 uToH :: UTCTime -> HTTPDate

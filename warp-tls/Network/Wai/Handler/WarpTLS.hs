@@ -30,6 +30,7 @@ module Network.Wai.Handler.WarpTLS (
     , tlsCiphers
     , tlsWantClientCert
     , tlsServerHooks
+    , tlsServerDHEParams
     , onInsecure
     , OnInsecure (..)
     -- * Runner
@@ -37,6 +38,8 @@ module Network.Wai.Handler.WarpTLS (
     , runTLSSocket
     -- * Exception
     , WarpTLSException (..)
+    , DH.Params
+    , DH.generateParams
     ) where
 
 #if __GLASGOW_HASKELL__ < 709
@@ -46,7 +49,6 @@ import Control.Applicative ((<|>))
 import Control.Exception (Exception, throwIO, bracket, finally, handle, fromException, try, IOException, onException, SomeException(..))
 import qualified Control.Exception as E
 import Control.Monad (void)
-import qualified Crypto.Random.AESCtr
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 import Data.Default.Class (def)
@@ -56,6 +58,7 @@ import Data.Typeable (Typeable)
 import Network.Socket (Socket, sClose, withSocketsDo, SockAddr, accept)
 import Network.Socket.ByteString (sendAll)
 import qualified Network.TLS as TLS
+import qualified Crypto.PubKey.DH as DH
 import qualified Network.TLS.Extra as TLSExtra
 import Network.Wai (Application)
 import Network.Wai.Handler.Warp
@@ -119,6 +122,13 @@ data TLSSettings = TLSSettings {
     -- Default: def
     --
     -- Since 3.0.2
+  , tlsServerDHEParams :: Maybe DH.Params
+    -- ^ Configuration for ServerDHEParams
+    -- more function lives in `cryptonite` package
+    --
+    -- Default: Nothing
+    --
+    -- Since 3.2.2
   }
 
 -- | Default 'TLSSettings'. Use this to create 'TLSSettings' with the field record name (aka accessors).
@@ -136,6 +146,7 @@ defaultTlsSettings = TLSSettings {
   , tlsCiphers = ciphers
   , tlsWantClientCert = False
   , tlsServerHooks = def
+  , tlsServerDHEParams = Nothing
   }
 
 -- taken from stunnel example in tls-extra
@@ -251,7 +262,7 @@ runTLSSocket' tlsset@TLSSettings{..} set credential sock app =
     params = def { -- TLS.ServerParams
         TLS.serverWantClientCert = tlsWantClientCert
       , TLS.serverCACertificates = []
-      , TLS.serverDHEParams      = Nothing
+      , TLS.serverDHEParams      = tlsServerDHEParams
       , TLS.serverHooks          = hooks
       , TLS.serverShared         = shared
       , TLS.serverSupported      = supported
@@ -310,12 +321,7 @@ mkConn tlsset s params = do
 httpOverTls :: TLS.TLSParams params => TLSSettings -> Socket -> S.ByteString -> params -> IO (Connection, Transport)
 httpOverTls TLSSettings{..} s bs0 params = do
     recvN <- makePlainReceiveN s bs0
-#if MIN_VERSION_tls(1,3,0)
     ctx <- TLS.contextNew (backend recvN) params
-#else
-    gen <- Crypto.Random.AESCtr.makeSystem
-    ctx <- TLS.contextNew (backend recvN) params gen
-#endif
     TLS.contextHookSetLogging ctx tlsLogging
     TLS.handshake ctx
     writeBuf <- allocateBuffer bufferSize

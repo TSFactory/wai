@@ -15,10 +15,7 @@ import qualified Network.Wai.Handler.Warp.Date as D
 import qualified Network.Wai.Handler.Warp.FdCache as F
 import qualified Network.Wai.Handler.Warp.FileInfoCache as I
 import qualified Network.Wai.Handler.Warp.Timeout as T
-
-#ifndef WINDOWS
 import System.Posix.Types (Fd)
-#endif
 
 ----------------------------------------------------------------
 
@@ -54,10 +51,6 @@ instance Show InvalidRequest where
 instance Exception InvalidRequest
 
 ----------------------------------------------------------------
-
-#ifdef WINDOWS
-type Fd = ()
-#endif
 
 -- | Data type to abstract file identifiers.
 --   On Unix, a file descriptor would be specified to make use of
@@ -116,15 +109,39 @@ data Connection = Connection {
 
 type Hash = Int
 
--- | Internal information.
+
+data InternalInfo0 =
+    InternalInfo0 T.Manager
+                  (IO D.GMTDate)
+                  (Hash -> FilePath -> IO (Maybe F.Fd, F.Refresh))
+                  (Hash -> FilePath -> IO I.FileInfo)
+
+timeoutManager0 :: InternalInfo0 -> T.Manager
+timeoutManager0 (InternalInfo0 tm _ _ _) = tm
+
+data InternalInfo1 =
+    InternalInfo1 T.Handle
+                  T.Manager
+                  (IO D.GMTDate)
+                  (Hash -> FilePath -> IO (Maybe F.Fd, F.Refresh))
+                  (Hash -> FilePath -> IO I.FileInfo)
+
+toInternalInfo1 :: InternalInfo0 -> T.Handle -> InternalInfo1
+toInternalInfo1 (InternalInfo0 b c d e) a = InternalInfo1 a b c d e
+
+threadHandle1 :: InternalInfo1 -> T.Handle
+threadHandle1 (InternalInfo1 th _ _ _ _) = th
+
 data InternalInfo = InternalInfo {
-    threadHandle :: T.Handle
+    threadHandle   :: T.Handle
   , timeoutManager :: T.Manager
-  , fdCacher :: Maybe F.MutableFdCache
-  , fileInfo :: FilePath -> IO I.FileInfo
-  , fileInfo' :: Int -> FilePath -> IO I.FileInfo
-  , dateCacher :: D.DateCache
+  , getDate        :: IO D.GMTDate
+  , getFd          :: FilePath -> IO (Maybe F.Fd, F.Refresh)
+  , getFileInfo    :: FilePath -> IO I.FileInfo
   }
+
+toInternalInfo :: InternalInfo1 -> Hash -> InternalInfo
+toInternalInfo (InternalInfo1 a b c d e) h = InternalInfo a b c (d h) (e h)
 
 ----------------------------------------------------------------
 

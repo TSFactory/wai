@@ -24,7 +24,7 @@ import Network.Wai.Handler.Warp.Types
 
 import Network.HTTP2
 import Network.HTTP2.Priority
-import Network.HPACK
+import Network.HPACK hiding (Buffer)
 
 ----------------------------------------------------------------
 
@@ -41,7 +41,7 @@ isHTTP2 tls = useHTTP2
 
 ----------------------------------------------------------------
 
-data Input = Input Stream Request
+data Input = Input Stream Request ValueTable InternalInfo
 
 ----------------------------------------------------------------
 
@@ -51,39 +51,40 @@ type BytesFilled = Int
 
 data Next = Next !BytesFilled (Maybe DynaNext)
 
-data Rspn = RspnNobody    H.Status H.ResponseHeaders
-          | RspnStreaming H.Status H.ResponseHeaders (TBQueue Sequence)
-          | RspnBuilder   H.Status H.ResponseHeaders Builder
-          | RspnFile      H.Status H.ResponseHeaders Int FilePath (Maybe FilePart)
+data Rspn = RspnNobody    H.Status (TokenHeaderList, ValueTable)
+          | RspnStreaming H.Status (TokenHeaderList, ValueTable) (TBQueue Sequence)
+          | RspnBuilder   H.Status (TokenHeaderList, ValueTable) Builder
+          | RspnFile      H.Status (TokenHeaderList, ValueTable) FilePath (Maybe FilePart)
 
 rspnStatus :: Rspn -> H.Status
-rspnStatus (RspnNobody    s _)        = s
-rspnStatus (RspnStreaming s _ _)      = s
-rspnStatus (RspnBuilder   s _ _)      = s
-rspnStatus (RspnFile      s _ _ _ _ ) = s
+rspnStatus (RspnNobody    s _)      = s
+rspnStatus (RspnStreaming s _ _)    = s
+rspnStatus (RspnBuilder   s _ _)    = s
+rspnStatus (RspnFile      s _ _ _ ) = s
 
-rspnHeaders :: Rspn -> H.ResponseHeaders
-rspnHeaders (RspnNobody    _ h)        = h
-rspnHeaders (RspnStreaming _ h _)      = h
-rspnHeaders (RspnBuilder   _ h _)      = h
-rspnHeaders (RspnFile      _ h _ _ _ ) = h
+rspnHeaders :: Rspn -> (TokenHeaderList, ValueTable)
+rspnHeaders (RspnNobody    _ t)      = t
+rspnHeaders (RspnStreaming _ t _)    = t
+rspnHeaders (RspnBuilder   _ t _)    = t
+rspnHeaders (RspnFile      _ t _ _ ) = t
 
-data Output = ORspn !Stream !Rspn
+data Output = ORspn !Stream !Rspn !InternalInfo
             | ONext !Stream !DynaNext !(Maybe (TBQueue Sequence))
 
 outputStream :: Output -> Stream
-outputStream (ORspn strm _)   = strm
+outputStream (ORspn strm _ _) = strm
 outputStream (ONext strm _ _) = strm
 
 outputMaybeTBQueue :: Output -> Maybe (TBQueue Sequence)
-outputMaybeTBQueue (ORspn _ (RspnStreaming _ _ tbq)) = Just tbq
-outputMaybeTBQueue (ORspn _ _)                       = Nothing
-outputMaybeTBQueue (ONext _ _ mtbq)                  = mtbq
+outputMaybeTBQueue (ORspn _ (RspnStreaming _ _ tbq) _) = Just tbq
+outputMaybeTBQueue (ORspn _ _ _)                       = Nothing
+outputMaybeTBQueue (ONext _ _ mtbq)                    = mtbq
 
 data Control = CFinish
-             | CGoaway   !ByteString
-             | CFrame    !ByteString
-             | CSettings !ByteString !SettingsList
+             | CGoaway    !ByteString
+             | CFrame     !ByteString
+             | CSettings  !ByteString !SettingsList
+             | CSettings0 !ByteString !ByteString !SettingsList
 
 ----------------------------------------------------------------
 
@@ -109,8 +110,8 @@ data Context = Context {
   , inputQ             :: !(TQueue Input)
   , outputQ            :: !(PriorityTree Output)
   , controlQ           :: !(TQueue Control)
-  , encodeDynamicTable :: !(IORef DynamicTable)
-  , decodeDynamicTable :: !(IORef DynamicTable)
+  , encodeDynamicTable :: !DynamicTable
+  , decodeDynamicTable :: !DynamicTable
   , connectionWindow   :: !(TVar WindowSize)
   }
 
@@ -127,8 +128,8 @@ newContext = Context <$> newIORef defaultSettings
                      <*> newTQueueIO
                      <*> newPriorityTree
                      <*> newTQueueIO
-                     <*> (newDynamicTableForEncoding defaultDynamicTableSize >>= newIORef)
-                     <*> (newDynamicTableForDecoding defaultDynamicTableSize >>= newIORef)
+                     <*> newDynamicTableForEncoding defaultDynamicTableSize
+                     <*> newDynamicTableForDecoding defaultDynamicTableSize 4096
                      <*> newTVarIO defaultInitialWindowSize
 
 clearContext :: Context -> IO ()
@@ -143,8 +144,8 @@ data OpenState =
               !Int  -- The number of continuation frames
               !Bool -- End of stream
               !Priority
-  | NoBody HeaderList !Priority
-  | HasBody HeaderList !Priority
+  | NoBody (TokenHeaderList,ValueTable) !Priority
+  | HasBody (TokenHeaderList,ValueTable) !Priority
   | Body !(TQueue ByteString)
 
 data ClosedCode = Finished

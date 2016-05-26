@@ -16,8 +16,7 @@ import qualified Data.Text as T
 import Data.Ord
 import qualified Data.ByteString as S
 import Crypto.Hash (hash, MD5, Digest)
-import Data.Byteable (toBytes)
-import qualified Data.ByteString.Base64 as B64
+import Data.ByteArray.Encoding
 import WaiAppStatic.Storage.Filesystem (defaultFileServerSettings)
 import System.FilePath (isPathSeparator)
 
@@ -50,7 +49,7 @@ embeddedLookup root pieces =
 toEntry :: (Piece, EmbeddedEntry) -> Either FolderName File
 toEntry (name, EEFolder{}) = Left name
 toEntry (name, EEFile bs) = Right File
-    { fileGetSize = S.length bs
+    { fileGetSize = fromIntegral $ S.length bs
     , fileToResponse = \s h -> W.responseBuilder s h $ fromByteString bs
     , fileName = name
     , fileGetHash = return $ Just $ runHash bs
@@ -87,7 +86,7 @@ toEmbedded fps =
 
 bsToFile :: Piece -> ByteString -> File
 bsToFile name bs = File
-    { fileGetSize = S.length bs
+    { fileGetSize = fromIntegral $ S.length bs
     , fileToResponse = \s h -> W.responseBuilder s h $ fromByteString bs
     , fileName = name
     , fileGetHash = return $ Just $ runHash bs
@@ -95,4 +94,4 @@ bsToFile name bs = File
     }
 
 runHash :: ByteString -> ByteString
-runHash = B64.encode . toBytes . (hash :: S.ByteString -> Digest MD5)
+runHash = convertToBase Base64 . (hash :: S.ByteString -> Digest MD5)

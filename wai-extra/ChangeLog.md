@@ -1,3 +1,23 @@
+## 3.0.15.1
+
+* don't use deprecated CRT functions on Windows [#544](https://github.com/yesodweb/wai/pull/544)
+
+## 3.0.15
+
+* add requestSizeCheck [#525](https://github.com/yesodweb/wai/pull/525)
+
+## 3.0.14.3
+
+* Add missing `requestHeaderReferer` and `requestHeaderUserAgent` fields to CGI [yesod#1186](https://github.com/yesodweb/yesod/issues/1186)
+
+## 3.0.14.2
+
+* Case insensitive multipart request header lookup [#518](https://github.com/yesodweb/wai/pull/518)
+
+## 3.0.14.1
+
+* Doc update for logStdout and logStdoutDev [#515](https://github.com/yesodweb/wai/issues/515)
+
 ## 3.0.14
 
 * Middleware to force domain names. [#506](https://github.com/yesodweb/wai/issues/506) [#507](https://github.com/yesodweb/wai/pull/507)

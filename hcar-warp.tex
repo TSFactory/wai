@@ -1,0 +1,34 @@
+% Warp-MW.tex
+\begin{hcarentry}{Warp}
+\label{warp}
+\report{Kazu Yamamoto}%05/16
+\participants{Michael Snoyman}
+%\status{stable}
+\makeheader
+
+Warp is a high performance, easy to deploy HTTP handler for WAI~\cref{wai}.
+Its supports both HTTP/1.1 and HTTP/2.
+
+Since the last HCAR, we have released Warp 3.2 which
+removes the experimental HTTP/2 APIs.
+The performance of HTTP/2 was drastically improved.
+The logic to handle static files such as \texttt{If-Modified-Since}
+was imported from Mighttpd2~\cref{mighttpd2}.
+
+\FurtherReading
+\begin{compactitem}
+\item``Warp: A Haskell Web Server''
+  \begin{itemize}
+  \item the May/June 2011 issue of IEEE Internet Computing
+  \item Issue page: \url{http://www.computer.org/portal/web/csdl/abs/mags/ic/2011/03/mic201103toc.htm}
+  \item  PDF: \url{http://steve.vinoski.net/pdf/IC-Warp\_a\_Haskell\_Web\_Server.pdf}
+  \end{itemize}
+\item ``Warp''
+  \begin{itemize}
+  \item The Performance of Open Srouce Applications
+  \item HTML: \url{http://www.aosabook.org/en/posa/warp.html}
+  \end{itemize}
+\end{compactitem}
+\end{hcarentry}
+
+\end{hcarentry}

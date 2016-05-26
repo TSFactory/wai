@@ -1,60 +1,85 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns #-}
+{-# LANGUAGE NamedFieldPuns, RecordWildCards #-}
 
-module Network.Wai.Handler.Warp.HTTP2.HPACK where
+module Network.Wai.Handler.Warp.HTTP2.HPACK (
+    hpackEncodeHeader
+  , hpackEncodeHeaderLoop
+  , hpackDecodeHeader
+  , just
+  ) where
 
-import Control.Arrow (first)
 import qualified Control.Exception as E
-import qualified Data.ByteString as B
-import Data.ByteString.Builder (Builder)
-import qualified Data.ByteString.Char8 as B8
-import Data.CaseInsensitive (foldedCase)
-import Data.IORef (readIORef, writeIORef)
-import Network.HPACK
+import Control.Monad (unless)
+import Data.ByteString (ByteString)
+import Network.HPACK hiding (Buffer)
+import Network.HPACK.Token
 import qualified Network.HTTP.Types as H
 import Network.HTTP2
 import Network.Wai.Handler.Warp.HTTP2.Types
-import Network.Wai.Handler.Warp.Header
-import Network.Wai.Handler.Warp.Response
+import Network.Wai.Handler.Warp.PackInt
 import qualified Network.Wai.Handler.Warp.Settings as S
 import Network.Wai.Handler.Warp.Types
 
 -- $setup
 -- >>> :set -XOverloadedStrings
 
+strategy :: EncodeStrategy
+strategy = EncodeStrategy { compressionAlgo = Linear, useHuffman = False }
+
 -- Set-Cookie: contains only one cookie value.
 -- So, we don't need to split it.
-hpackEncodeHeader :: Context -> InternalInfo -> S.Settings
-                  -> H.Status -> H.ResponseHeaders
-                  -> IO Builder
-hpackEncodeHeader ctx ii settings s h = do
-    hdr1 <- addServerAndDate h
-    let hdr2 = (":status", status) : map (first foldedCase) hdr1
-    hpackEncodeRawHeaders ctx hdr2
-  where
-    status = B8.pack $ show $ H.statusCode s
-    dc = dateCacher ii
-    rspidxhdr = indexResponseHeader h
-    defServer = S.settingsServerName settings
-    addServerAndDate = addDate dc rspidxhdr . addServer defServer rspidxhdr
+hpackEncodeHeader :: Context -> Buffer -> BufSize
+                  -> InternalInfo -> S.Settings
+                  -> H.Status -> (TokenHeaderList,ValueTable)
+                  -> IO (TokenHeaderList, Int)
+hpackEncodeHeader Context{..} buf siz ii settings s (ths0,tbl) = do
+    let !defServer = S.settingsServerName settings
+        !ths1 = addHeader tokenServer defServer tbl ths0
+    date <- getDate ii
+    let !ths2 = addHeader tokenDate date tbl ths1
+        !status = packStatus s
+        !ths3 = (tokenStatus, status) : ths2
+    encodeTokenHeader buf siz strategy True encodeDynamicTable ths3
 
-hpackEncodeCIHeaders :: Context -> [H.Header] -> IO Builder
-hpackEncodeCIHeaders ctx = hpackEncodeRawHeaders ctx . map (first foldedCase)
+{-# INLINE addHeader #-}
+addHeader :: Token -> ByteString -> ValueTable -> TokenHeaderList -> TokenHeaderList
+addHeader t v tbl ths = case getHeaderValue t tbl of
+    Nothing -> (t,v) : ths
+    Just _  -> ths
 
-hpackEncodeRawHeaders :: Context -> [(B.ByteString, B.ByteString)] -> IO Builder
-hpackEncodeRawHeaders Context{encodeDynamicTable} hdr = do
-    ehdrtbl <- readIORef encodeDynamicTable
-    (ehdrtbl', builder) <- encodeHeaderBuilder defaultEncodeStrategy ehdrtbl hdr
-    writeIORef encodeDynamicTable ehdrtbl'
-    return builder
+hpackEncodeHeaderLoop :: Context -> Buffer -> BufSize -> TokenHeaderList
+                      -> IO (TokenHeaderList, Int)
+hpackEncodeHeaderLoop Context{..} buf siz hs =
+    encodeTokenHeader buf siz strategy False encodeDynamicTable hs
 
 ----------------------------------------------------------------
 
-hpackDecodeHeader :: HeaderBlockFragment -> Context -> IO HeaderList
-hpackDecodeHeader hdrblk Context{decodeDynamicTable} = do
-    hdrtbl <- readIORef decodeDynamicTable
-    (hdrtbl', hdr) <- decodeHeader hdrtbl hdrblk `E.onException` cleanup
-    writeIORef decodeDynamicTable hdrtbl'
-    return hdr
+hpackDecodeHeader :: HeaderBlockFragment -> Context -> IO (TokenHeaderList, ValueTable)
+hpackDecodeHeader hdrblk Context{..} = do
+    tbl@(_,vt) <- decodeTokenHeader decodeDynamicTable hdrblk `E.catch` handl
+    unless (checkRequestHeader vt) $
+        E.throwIO $ ConnectionError ProtocolError "the header key is illegal"
+    return tbl
   where
-    cleanup = E.throwIO $ ConnectionError CompressionError "cannot decompress the header"
+    handl IllegalHeaderName =
+        E.throwIO $ ConnectionError ProtocolError "the header key is illegal"
+    handl _ =
+        E.throwIO $ ConnectionError CompressionError "cannot decompress the header"
+
+{-# INLINE checkRequestHeader #-}
+checkRequestHeader :: ValueTable -> Bool
+checkRequestHeader reqvt
+  | getHeaderValue tokenStatus     reqvt /= Nothing     = False
+  | getHeaderValue tokenPath       reqvt == Nothing     = False
+  | getHeaderValue tokenMethod     reqvt == Nothing     = False
+  | getHeaderValue tokenAuthority  reqvt == Nothing     = False
+  | getHeaderValue tokenConnection reqvt /= Nothing     = False
+  | just (getHeaderValue tokenTE reqvt) (/= "trailers") = False
+  | otherwise                                           = True
+
+{-# INLINE just #-}
+just :: Maybe a -> (a -> Bool) -> Bool
+just Nothing  _    = False
+just (Just x) p
+  | p x            = True
+  | otherwise      = False

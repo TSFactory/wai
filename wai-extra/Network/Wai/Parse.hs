@@ -45,6 +45,7 @@ import Control.Monad (when, unless)
 import Control.Monad.Trans.Resource (allocate, release, register, InternalState, runInternalState)
 import Data.IORef
 import Network.HTTP.Types (hContentType)
+import Data.CaseInsensitive (mk)
 
 breakDiscard :: Word8 -> S.ByteString -> (S.ByteString, S.ByteString)
 breakDiscard w s =
@@ -94,7 +95,7 @@ lbsBackEnd _ _ popper =
 tempFileBackEnd :: InternalState -> ignored1 -> ignored2 -> IO S.ByteString -> IO FilePath
 tempFileBackEnd = tempFileBackEndOpts getTemporaryDirectory "webenc.buf"
 
--- | Same as 'tempFileSink', but use configurable temp folders and patterns.
+-- | Same as 'tempFileBackEnd', but use configurable temp folders and patterns.
 tempFileBackEndOpts :: IO FilePath -- ^ get temporary directory
                     -> String -- ^ filename pattern
                     -> InternalState
@@ -300,11 +301,11 @@ parsePieces sink bound rbody add =
                     (wasFound, ()) <- sinkTillBound bound iter seed src
                     when wasFound (loop src)
       where
-        contDisp = S8.pack "Content-Disposition"
-        contType = S8.pack "Content-Type"
+        contDisp = mk $ S8.pack "Content-Disposition"
+        contType = mk $ S8.pack "Content-Type"
         parsePair s =
             let (x, y) = breakDiscard 58 s -- colon
-             in (x, S.dropWhile (== 32) y) -- space
+             in (mk $ x, S.dropWhile (== 32) y) -- space
 
 data Bound = FoundBound S.ByteString S.ByteString
            | NoBound

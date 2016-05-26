@@ -1,17 +1,25 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 -- | Some helpers for interrogating a WAI 'Request'.
 
 module Network.Wai.Request
     ( appearsSecure
     , guessApproot
+    , RequestSizeException(..)
+    , requestSizeCheck
     ) where
 
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
 import Network.HTTP.Types (HeaderName)
-import Network.Wai (Request, isSecure, requestHeaders, requestHeaderHost)
+import Network.Wai
 
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as C
+import Control.Exception (Exception, throwIO)
+import Data.Typeable (Typeable)
+import Data.Word (Word64)
+import Data.IORef (atomicModifyIORef', newIORef)
+
 
 -- | Does this request appear to have been made over an SSL connection?
 --
@@ -24,7 +32,7 @@ import qualified Data.ByteString.Char8 as C
 -- force a non-SSL request to SSL by redirect. One can safely choose not to
 -- redirect when the request /appears/ secure, even if it's actually not.
 --
--- Since 3.0.7
+-- @since 3.0.7
 appearsSecure :: Request -> Bool
 appearsSecure request = isSecure request || any (uncurry matchHeader)
     [ ("HTTPS"                  , (== "on"))
@@ -44,8 +52,50 @@ appearsSecure request = isSecure request || any (uncurry matchHeader)
 -- application. For more information and relevant caveats, please see
 -- "Network.Wai.Middleware.Approot".
 --
--- Since 3.0.7
+-- @since 3.0.7
 guessApproot :: Request -> ByteString
 guessApproot req =
     (if appearsSecure req then "https://" else "http://") `S.append`
     (fromMaybe "localhost" $ requestHeaderHost req)
+
+-- | see 'requestSizeCheck'
+--
+-- @since 3.0.15
+data RequestSizeException
+    = RequestSizeException Word64
+    deriving (Eq, Ord, Typeable)
+
+instance Exception RequestSizeException
+
+instance Show RequestSizeException where
+    showsPrec p (RequestSizeException limit) =
+        showString ("Request Body is larger than ") . showsPrec p limit . showString " bytes."
+
+-- | Check request body size to avoid server crash when request is too large.
+--
+-- This function first checks @'requestBodyLength'@, if content-length is known
+-- but larger than limit, or it's unknown but we have received too many chunks,
+-- a 'RequestSizeException' are thrown when user use @'requestBody'@ to extract
+-- request body inside IO.
+--
+-- @since 3.0.15
+requestSizeCheck :: Word64 -> Request -> IO Request
+requestSizeCheck maxSize req =
+    case requestBodyLength req of
+        KnownLength len  ->
+            if len > maxSize
+                then return $ req { requestBody = throwIO (RequestSizeException maxSize) }
+                else return req
+        ChunkedBody      -> do
+            currentSize <- newIORef 0
+            return $ req
+                { requestBody = do
+                    bs <- requestBody req
+                    total <-
+                        atomicModifyIORef' currentSize $ \sz ->
+                            let nextSize = sz + fromIntegral (S.length bs)
+                            in (nextSize, nextSize)
+                    if total > maxSize
+                    then throwIO (RequestSizeException maxSize)
+                    else return bs
+                }
